@@ -1,0 +1,113 @@
+name: Build and publish DEVELOPMENT preview
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: development-pages-preview
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'quddha16-pixel/lottery-of-life-preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      source_sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: controls
+          persist-credentials: false
+      - name: Read the selected game commit
+        id: candidate
+        run: |
+          node --input-type=module <<'JS'
+          import {readFile,appendFile} from 'node:fs/promises';
+          const config=JSON.parse(await readFile('controls/preview.json','utf8'));
+          if(config.sourceRepository!=='quddha16-pixel/lottery-of-life'||!/^[0-9a-f]{40}$/.test(config.sourceCommit))throw Error('Invalid source selection');
+          await appendFile(process.env.GITHUB_OUTPUT,`sha=${config.sourceCommit}\n`);
+          JS
+      - uses: actions/checkout@v4
+        with:
+          repository: quddha16-pixel/lottery-of-life
+          ref: ${{ steps.candidate.outputs.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Confirm all historical Phase 3 work is included
+        run: git merge-base --is-ancestor 170323f831e340c4ee52997dc716cce910070fd5 HEAD
+        working-directory: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - run: npm ci
+        working-directory: source
+      - run: npm run lint
+        working-directory: source
+      - run: npm test
+        working-directory: source
+      - run: npx playwright install --with-deps chromium
+        working-directory: source
+      - run: npm run test:e2e
+        working-directory: source
+      - name: Build with the preview base, label and isolated saves
+        run: node controls/scripts/build-preview.mjs source
+      - name: Test the actual preview bundle, storage isolation and navigation
+        run: node controls/scripts/check-preview.mjs source
+      - name: Confirm no game source files were modified
+        run: git diff --exit-code HEAD --
+        working-directory: source
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: source/dist
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preview-browser-evidence
+          path: |
+            test-results
+            source/test-results
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.publication.outputs.page_url }}
+    steps:
+      - name: Publish only this separate preview repository
+        id: publication
+        uses: actions/deploy-pages@v4
+  verify:
+    needs: [build,deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: download
+      - run: mkdir site && tar -xf download/artifact.tar -C site
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify HTTPS, exact game SHA and all published app bytes
+        run: node scripts/verify-live.mjs site
+      - name: Record verified preview identity
+        env:
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+        run: |
+          {
+            echo '## DEVELOPMENT preview — production is unchanged'
+            echo 'URL: https://quddha16-pixel.github.io/lottery-of-life-preview/'
+            echo "Game source: $SOURCE_SHA"
+            echo 'The deployed static identity is verified. Quentin must personally test this exact preview on his iPhone before the Playable milestone is recorded.'
+          } >> "$GITHUB_STEP_SUMMARY"

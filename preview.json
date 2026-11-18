@@ -1,0 +1,8 @@
+{
+  "sourceRepository": "quddha16-pixel/lottery-of-life",
+  "sourceCommit": "ebff78983faa8e134fca900d93392b8ce922c3bc",
+  "baseCommit": "170323f831e340c4ee52997dc716cce910070fd5",
+  "previewRepository": "quddha16-pixel/lottery-of-life-preview",
+  "base": "/lottery-of-life-preview/",
+  "saveKey": "lottery-of-life-preview.save.v1"
+}
